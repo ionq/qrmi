@@ -13,6 +13,7 @@
 /// QRMI implementation for IonQ Cloud
 use crate::models::{Payload, Target, TaskResult, TaskStatus};
 use crate::QuantumResource;
+use crate::ionq::open_qasm_to_qis::translate_qasm3_to_ionq_qis;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -107,15 +108,15 @@ impl IonQCloud {
         Ok(Value::Object(m))
     }
 
-    fn detect_job_type_and_input(program: &str) -> Result<(&'static str, Value)> {
+    fn resolve_job_type_and_input(&self, program: &str) -> Result<(&'static str, Value)> {
         let s = program.trim_start();
 
         // If it's an IonQ circuit JSON *input object* (not a full job request), keep supporting it:
         // { "qubits": ..., "circuit": [...] }
         // { "qubits": ..., "circuits": [ ... "circuit": [...]] }
         if s.starts_with('{') {
-            if let Ok(v) = serde_json::from_str::<Value>(s) {
-                if let Some(input) = v.get("input") {
+            if let Ok(qis) = serde_json::from_str::<Value>(s) {
+                if let Some(input) = qis.get("input") {
                     if input.get("qubits").is_some() && input.get("circuits").is_some() {
                         return Ok((JOB_TYPE_MULTI_CIRCUIT, input.clone()));
                     }
@@ -123,11 +124,11 @@ impl IonQCloud {
                         return Ok((JOB_TYPE_CIRCUIT, input.clone()));
                     }
                 }
-                if v.get("qubits").is_some() && v.get("circuits").is_some() {
-                    return Ok((JOB_TYPE_MULTI_CIRCUIT, v));
+                if qis.get("qubits").is_some() && qis.get("circuits").is_some() {
+                    return Ok((JOB_TYPE_MULTI_CIRCUIT, qis));
                 }
-                if v.get("qubits").is_some() && v.get("circuit").is_some() {
-                    return Ok((JOB_TYPE_CIRCUIT, v));
+                if qis.get("qubits").is_some() && qis.get("circuit").is_some() {
+                    return Ok((JOB_TYPE_CIRCUIT, qis));
                 }
             }
         }
@@ -135,12 +136,25 @@ impl IonQCloud {
         // Otherwise, treat it as source text and wrap it.
         // Use the header to decide between QASM2 vs QASM3; default to QIR.
         let first_line = s.lines().next().unwrap_or("").trim();
-        let first_uc = first_line.to_ascii_uppercase();
+        let first_line_uc = first_line.to_ascii_uppercase();
 
-        if first_uc.starts_with("OPENQASM 2") {
+        if self.backend != Backend::Simulator && first_line_uc.starts_with("OPENQASM") {
+            let qis_string = translate_qasm3_to_ionq_qis(program)
+                .map_err(|e| anyhow::anyhow!("failed to translate QASM to IonQ QIS: {e}"))?;
+            let qis: Value = serde_json::from_str(&qis_string)
+                .map_err(|e| anyhow::anyhow!("failed to parse translated IonQ QIS JSON: {e}"))?;
+            if qis.get("circuits").is_some() {
+                return Ok((JOB_TYPE_MULTI_CIRCUIT, qis));
+            }
+            if qis.get("circuit").is_some() {
+                return Ok((JOB_TYPE_CIRCUIT, qis));
+            }
+        }
+
+        if first_line_uc.starts_with("OPENQASM 2") {
             return Ok((JOB_TYPE_QASM2, serde_json::json!({ "data": program })));
         }
-        if first_uc.starts_with("OPENQASM 3") {
+        if first_line_uc.starts_with("OPENQASM 3") {
             return Ok((JOB_TYPE_QASM3, serde_json::json!({ "data": program })));
         }
 
@@ -365,7 +379,7 @@ impl QuantumResource for IonQCloud {
         }
 
         // Normal path: wrap raw QASM/QIR (or IonQ circuit JSON input object)
-        let (job_type, job_input) = Self::detect_job_type_and_input(&input)?;
+        let (job_type, job_input) = self.resolve_job_type_and_input(&input)?;
         let noise_model = Self::extract_noise_model(&input)?;
         let job: IonQJob = if job_type == JOB_TYPE_CIRCUIT || job_type == JOB_TYPE_MULTI_CIRCUIT {
             self.submit_circuit_job(&job_name, job_type, shots, &noise_model, job_input).await?
