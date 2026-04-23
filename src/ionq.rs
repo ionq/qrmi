@@ -14,6 +14,7 @@
 
 mod cloud;
 mod mock;
+mod open_qasm_to_qis;
 
 pub use self::cloud::IonQCloud;
 pub use mock::IonQMock;

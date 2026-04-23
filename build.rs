@@ -12,6 +12,49 @@
 
 // For C API bindings
 fn main() {
+    // Link the qasm3-to-ionq-qis C++ translator.
+    // https://github.com/ionq/qasm3-to-ionq-qis
+    let src_dir = match std::env::var("QASM3_TO_IONQ_QIS_DIR") {
+        Ok(dir) => std::path::PathBuf::from(dir),
+        Err(_) => {
+            let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+            let src = out.join("qasm3-to-ionq-qis");
+            if !src.join("CMakeLists.txt").exists() {
+                let status = std::process::Command::new("git")
+                    .args([
+                        "clone",
+                        "--depth=1",
+                        "https://github.com/ionq/qasm3-to-ionq-qis.git",
+                        src.to_str().unwrap(),
+                    ])
+                    .status()
+                    .expect("failed to run git clone for qasm3-to-ionq-qis");
+                assert!(status.success(), "git clone qasm3-to-ionq-qis failed");
+            }
+            src
+        }
+    };
+
+    let dst = cmake::Config::new(&src_dir)
+        .build_target("qasm3_to_ionq_qis_core")
+        .build();
+
+    println!("cargo:rustc-link-search=native={}/build", dst.display());
+    println!("cargo:rustc-link-lib=static=qasm3_to_ionq_qis_core");
+
+    let antlr_search = format!(
+        "{}/build/_deps/antlr4_runtime-build/runtime",
+        dst.display()
+    );
+    println!("cargo:rustc-link-search=native={antlr_search}");
+    println!("cargo:rustc-link-lib=static=antlr4-runtime");
+
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=c++");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
+
     for (key, value) in std::env::vars() {
         eprintln!("{key}: {value}");
     }
