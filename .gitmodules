@@ -1,3 +1,0 @@
-[submodule "dependencies/qasm3_to_ionq_qis"]
-	path = dependencies/qasm3_to_ionq_qis
-	url = https://github.com/ionq/qasm3-to-ionq-qis.git
