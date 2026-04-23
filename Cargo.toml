@@ -51,6 +51,7 @@ eyre = { version = "0.6.8", optional = true }
 
 [build-dependencies]
 cbindgen = "0.29"
+cmake = "0.1"
 
 [workspace]
 members = [

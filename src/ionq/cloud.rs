@@ -138,20 +138,24 @@ impl IonQCloud {
         let first_line = s.lines().next().unwrap_or("").trim();
         let first_line_uc = first_line.to_ascii_uppercase();
 
-        if self.backend != Backend::Simulator && first_line_uc.starts_with("OPENQASM") {
+        if self.backend != Backend::Simulator && first_line_uc.starts_with("OPENQASM 3") {
             let qis_string = translate_qasm3_to_ionq_qis(program)
                 .map_err(|e| anyhow::anyhow!("failed to translate QASM to IonQ QIS: {e}"))?;
-            let qis: Value = serde_json::from_str(&qis_string)
+            let envelope: Value = serde_json::from_str(&qis_string)
                 .map_err(|e| anyhow::anyhow!("failed to parse translated IonQ QIS JSON: {e}"))?;
-            if qis.get("circuits").is_some() {
-                return Ok((JOB_TYPE_MULTI_CIRCUIT, qis));
-            }
-            if qis.get("circuit").is_some() {
-                return Ok((JOB_TYPE_CIRCUIT, qis));
-            }
-            bail!(
-                "translated IonQ QIS JSON missing expected 'circuit' or 'circuits' fields."
-            );
+
+            // The translator returns a full IonQ envelope:
+            // {"type": "ionq.circuit.v1", "input": {"qubits": N, "circuit": [...]}}
+            let job_type = match envelope.get("type").and_then(|t| t.as_str()) {
+                Some(t) if t == JOB_TYPE_MULTI_CIRCUIT => JOB_TYPE_MULTI_CIRCUIT,
+                Some(_) => JOB_TYPE_CIRCUIT,
+                None => bail!("translated IonQ QIS JSON missing 'type' field"),
+            };
+            let input = envelope
+                .get("input")
+                .cloned()
+                .unwrap_or(envelope);
+            return Ok((job_type, input));
         }
 
         if first_line_uc.starts_with("OPENQASM 2") {
@@ -473,5 +477,90 @@ impl QuantumResource for IonQCloud {
             m.insert("session_id".to_string(), sid.clone());
         }
         m
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_cloud(backend: &str) -> IonQCloud {
+        IonQCloud::new(backend).expect("failed to construct IonQCloud for test")
+    }
+
+    const BELL_QASM3: &str = "\
+OPENQASM 3.0;
+include \"stdgates.inc\";
+qubit[2] q;
+h q[0];
+cx q[0], q[1];
+";
+
+    const SIMPLE_QASM2: &str = "\
+OPENQASM 2.0;
+include \"qelib1.inc\";
+qreg q[2];
+h q[0];
+cx q[0], q[1];
+";
+
+    #[test]
+    fn qasm3_on_qpu_translates_to_circuit() {
+        let cloud = make_cloud("aria-1");
+        let (job_type, input) = cloud.resolve_job_type_and_input(BELL_QASM3).unwrap();
+        assert_eq!(job_type, JOB_TYPE_CIRCUIT);
+        assert!(input.get("qubits").is_some());
+        assert!(input.get("circuit").is_some());
+        let circuit = input["circuit"].as_array().unwrap();
+        assert_eq!(circuit.len(), 2);
+        assert_eq!(circuit[0]["gate"], "h");
+        assert_eq!(circuit[1]["gate"], "cnot");
+    }
+
+    #[test]
+    fn qasm3_on_simulator_uses_native_qasm3_type() {
+        let cloud = make_cloud("simulator");
+        let (job_type, input) = cloud.resolve_job_type_and_input(BELL_QASM3).unwrap();
+        assert_eq!(job_type, JOB_TYPE_QASM3);
+        assert_eq!(input["data"].as_str().unwrap(), BELL_QASM3);
+    }
+
+    #[test]
+    fn qasm2_on_qpu_uses_native_qasm2_type() {
+        let cloud = make_cloud("aria-1");
+        let (job_type, input) = cloud.resolve_job_type_and_input(SIMPLE_QASM2).unwrap();
+        assert_eq!(job_type, JOB_TYPE_QASM2);
+        assert_eq!(input["data"].as_str().unwrap(), SIMPLE_QASM2);
+    }
+
+    #[test]
+    fn qasm2_on_simulator_uses_native_qasm2_type() {
+        let cloud = make_cloud("simulator");
+        let (job_type, _) = cloud.resolve_job_type_and_input(SIMPLE_QASM2).unwrap();
+        assert_eq!(job_type, JOB_TYPE_QASM2);
+    }
+
+    #[test]
+    fn qir_input_defaults_to_qir_type() {
+        let cloud = make_cloud("aria-1");
+        let qir = "%0 = call i32 @__quantum__rt__initialize()";
+        let (job_type, _) = cloud.resolve_job_type_and_input(qir).unwrap();
+        assert_eq!(job_type, JOB_TYPE_QIR);
+    }
+
+    #[test]
+    fn circuit_json_returns_circuit_type() {
+        let cloud = make_cloud("simulator");
+        let json = r#"{"qubits": 2, "circuit": [{"gate": "h", "target": 0}]}"#;
+        let (job_type, _) = cloud.resolve_job_type_and_input(json).unwrap();
+        assert_eq!(job_type, JOB_TYPE_CIRCUIT);
+    }
+
+    #[test]
+    fn multi_circuit_json_returns_multi_circuit_type() {
+        let cloud = make_cloud("simulator");
+        let json = r#"{"qubits": 2, "circuits": [{"circuit": [{"gate": "h", "target": 0}]}]}"#;
+        let (job_type, _) = cloud.resolve_job_type_and_input(json).unwrap();
+        assert_eq!(job_type, JOB_TYPE_MULTI_CIRCUIT);
     }
 }

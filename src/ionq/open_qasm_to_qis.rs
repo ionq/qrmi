@@ -19,6 +19,7 @@ pub struct IonqTranslateResult {
     pub error_utf8: *mut c_char,
 }
 
+#[link(name = "qasm3_to_ionq_qis_core", kind = "static")]
 unsafe extern "C" {
     fn translate_qasm3_to_ionq_qis_c(src: *const c_char) -> IonqTranslateResult;
     fn ionq_free_string(s: *mut c_char);

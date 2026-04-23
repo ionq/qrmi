@@ -12,6 +12,35 @@
 
 // For C API bindings
 fn main() {
+    // Build the qasm3-to-ionq-qis C++ translator via cmake.
+    let dst = cmake::Config::new("dependencies/qasm3_to_ionq_qis")
+        .build_target("qasm3_to_ionq_qis_core")
+        .build();
+
+    println!(
+        "cargo:rustc-link-search=native={}/build",
+        dst.display()
+    );
+    println!("cargo:rustc-link-lib=static=qasm3_to_ionq_qis_core");
+
+    // Link the ANTLR4 runtime (built by cmake FetchContent into the build tree).
+    // The exact path depends on the cmake build layout.
+    let antlr_search = format!(
+        "{}/build/_deps/antlr4_runtime-build/runtime",
+        dst.display()
+    );
+    println!("cargo:rustc-link-search=native={antlr_search}");
+    println!("cargo:rustc-link-lib=static=antlr4-runtime");
+
+    // Link the C++ standard library.
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=c++");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
+
+    println!("cargo:rerun-if-changed=dependencies/qasm3_to_ionq_qis/");
+
     for (key, value) in std::env::vars() {
         eprintln!("{key}: {value}");
     }
