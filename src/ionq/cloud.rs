@@ -149,6 +149,9 @@ impl IonQCloud {
             if qis.get("circuit").is_some() {
                 return Ok((JOB_TYPE_CIRCUIT, qis));
             }
+            bail!(
+                "translated IonQ QIS JSON missing expected 'circuit' or 'circuits' fields."
+            );
         }
 
         if first_line_uc.starts_with("OPENQASM 2") {
