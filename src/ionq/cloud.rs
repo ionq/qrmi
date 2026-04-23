@@ -138,7 +138,7 @@ impl IonQCloud {
         let first_line = s.lines().next().unwrap_or("").trim();
         let first_line_uc = first_line.to_ascii_uppercase();
 
-        if self.backend != Backend::Simulator && first_line_uc.starts_with("OPENQASM 3") {
+        if self.backend != Backend::Simulator && first_line_uc.starts_with("OPENQASM") {
             let qis_string = translate_qasm3_to_ionq_qis(program)
                 .map_err(|e| anyhow::anyhow!("failed to translate QASM to IonQ QIS: {e}"))?;
             let qis: Value = serde_json::from_str(&qis_string)
