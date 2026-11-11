@@ -1,3 +1,4 @@
 python-dotenv
 qrmi[alice-bob]
 qsharp
+tornado>=6.6rc1 # not directly required, pinned by Snyk to avoid a vulnerability
